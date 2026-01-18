@@ -1,0 +1,133 @@
+{
+  "version": "0.1",
+  "triage_thresholds": {
+    "urgent_overall": 6,
+    "routine_overall": 0
+  },
+  "departments": {
+    "emergency": {"name": "急诊科", "hint": "出现高危信号/无法排除急症时优先"},
+    "cardiology": {"name": "心内科/胸痛中心", "hint": "疑似心肌缺血、心律失常等"},
+    "pulmonology": {"name": "呼吸与危重症医学科（呼吸科）", "hint": "咳嗽/呼吸困难/胸膜性疼痛等"},
+    "gastro": {"name": "消化内科", "hint": "反酸烧心、与进食相关等"},
+    "orthopedics": {"name": "骨科/疼痛科", "hint": "按压或活动诱发、肌骨相关"},
+    "psych": {"name": "心理/精神科（或身心门诊）", "hint": "惊恐发作样症状、焦虑相关"},
+    "general": {"name": "全科/内科", "hint": "症状不典型但需进一步评估"}
+  },
+  "red_flags": [
+    {
+      "id": "RF_ACS",
+      "name": "疑似急性冠脉综合征/心肌梗死",
+      "message": "胸部压榨/紧缩/沉重感，伴放射痛或气促/大汗/恶心等",
+      "expr": {
+        "all": [
+          {"field": "pain_quality", "in": ["压榨/紧缩", "压迫感/沉重感"]},
+          {"any": [
+            {"field": "radiation", "eq": "是"},
+            {"field": "sob", "eq": "是"},
+            {"field": "sweat_nausea", "eq": "是"},
+            {"field": "palpitations", "eq": "是"}
+          ]}
+        ]
+      }
+    },
+    {
+      "id": "RF_SYNCOPE",
+      "name": "胸痛伴晕厥/近晕厥",
+      "message": "胸痛同时出现晕厥/眼前发黑/站立不稳",
+      "expr": {"field": "syncope", "eq": "是"}
+    },
+    {
+      "id": "RF_STROKE",
+      "name": "胸痛伴卒中样症状",
+      "message": "胸痛同时出现口齿不清、偏侧无力/麻木、视物困难等",
+      "expr": {"field": "neuro_deficit", "eq": "是"}
+    },
+    {
+      "id": "RF_DISSECTION",
+      "name": "疑似主动脉夹层",
+      "message": "突然发生的撕裂样/刀割样胸背痛，或伴昏厥/卒中样症状",
+      "expr": {
+        "all": [
+          {"field": "sudden_onset", "eq": "是"},
+          {"field": "tearing_pain", "eq": "是"}
+        ]
+      }
+    },
+    {
+      "id": "RF_PE",
+      "name": "疑似肺栓塞（需急评估）",
+      "message": "胸痛伴突然气促/咯血/晕厥，或近期久坐久卧/手术等风险",
+      "expr": {
+        "all": [
+          {"field": "sob", "eq": "是"},
+          {"any": [
+            {"field": "hemoptysis", "eq": "是"},
+            {"field": "leg_swelling", "eq": "是"},
+            {"field": "immobilization", "eq": "是"},
+            {"field": "syncope", "eq": "是"}
+          ]}
+        ]
+      }
+    },
+    {
+      "id": "RF_PTX",
+      "name": "疑似气胸（需急评估）",
+      "message": "突发胸痛并气促，尤其单侧疼痛明显",
+      "expr": {
+        "all": [
+          {"field": "sudden_onset", "eq": "是"},
+          {"field": "sob", "eq": "是"},
+          {"field": "pleuritic", "eq": "是"}
+        ]
+      }
+    },
+    {
+      "id": "RF_BOERHAAVE",
+      "name": "疑似食管破裂（Boerhaave 综合征）",
+      "message": "剧烈呕吐/用力后出现突发严重胸痛",
+      "expr": {
+        "all": [
+          {"field": "vomiting", "eq": "是"},
+          {"field": "sudden_onset", "eq": "是"},
+          {"field": "pain_severity", "gte": 7}
+        ]
+      }
+    },
+    {
+      "id": "RF_TRAUMA",
+      "name": "胸部外伤后胸痛",
+      "message": "胸部受到撞击/跌倒/穿刺伤后出现胸痛或呼吸困难",
+      "expr": {"field": "trauma", "eq": "是"}
+    }
+  ],
+  "score_rules": [
+    {"when": {"field": "pain_quality", "in": ["压榨/紧缩", "压迫感/沉重感"]}, "add": {"cardiac": 3}},
+    {"when": {"field": "exertional", "eq": "是"}, "add": {"cardiac": 2}},
+    {"when": {"field": "relieved_by_rest", "eq": "是"}, "add": {"cardiac": 1}},
+    {"when": {"field": "radiation", "eq": "是"}, "add": {"cardiac": 2}},
+    {"when": {"field": "sweat_nausea", "eq": "是"}, "add": {"cardiac": 1}},
+    {"when": {"field": "risk_cad", "eq": "是"}, "add": {"cardiac": 2}},
+
+    {"when": {"field": "sob", "eq": "是"}, "add": {"pulmonary": 2}},
+    {"when": {"field": "pleuritic", "eq": "是"}, "add": {"pulmonary": 2}},
+    {"when": {"field": "cough_fever", "eq": "是"}, "add": {"pulmonary": 2}},
+    {"when": {"field": "hemoptysis", "eq": "是"}, "add": {"pulmonary": 2}},
+
+    {"when": {"field": "heartburn", "eq": "是"}, "add": {"gi": 3}},
+    {"when": {"field": "after_meal", "eq": "是"}, "add": {"gi": 2}},
+    {"when": {"field": "relieved_by_antacid", "eq": "是"}, "add": {"gi": 2}},
+
+    {"when": {"field": "reproducible", "eq": "是"}, "add": {"msk": 3}},
+    {"when": {"field": "worse_with_movement", "eq": "是"}, "add": {"msk": 2}},
+
+    {"when": {"field": "panic", "eq": "是"}, "add": {"psych": 2}},
+    {"when": {"field": "stress_trigger", "eq": "是"}, "add": {"psych": 1}}
+  ],
+  "dept_mapping": {
+    "cardiac": "cardiology",
+    "pulmonary": "pulmonology",
+    "gi": "gastro",
+    "msk": "orthopedics",
+    "psych": "psych"
+  }
+}
