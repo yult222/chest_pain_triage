@@ -20,6 +20,7 @@ class GenerateCaseWorker(QObject):
         patient: PatientInfo,
         answers: ChestPainAnswers,
         symptom_text: str,
+        profile_id: str | None,
         has_key: bool,
     ) -> None:
         super().__init__()
@@ -27,6 +28,7 @@ class GenerateCaseWorker(QObject):
         self._patient = patient
         self._answers = answers
         self._symptom_text = symptom_text
+        self._profile_id = profile_id
         self._has_key = has_key
 
     @Slot()
@@ -37,6 +39,7 @@ class GenerateCaseWorker(QObject):
                 patient=self._patient,
                 answers=self._answers,
                 symptom_text=self._symptom_text,
+                profile_id=self._profile_id,
                 has_key=self._has_key,
                 progress=self.progress.emit,
             )

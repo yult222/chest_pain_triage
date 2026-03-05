@@ -61,8 +61,9 @@ def evaluate_realtime_alert(
     answers_preview: ChestPainAnswers,
     symptom_text: str,
     shown_signature: Optional[str],
+    profile_id: Optional[str] = None,
 ) -> RealtimeAlert:
-    triage_preview = triage_from_rules(kb, answers_preview)
+    triage_preview = triage_from_rules(kb, answers_preview, profile_id=profile_id)
     hits = [f"{rf.name}（{rf.message}）" for rf in triage_preview.red_flags]
     hits += detect_text_red_flags(symptom_text)
 
@@ -90,6 +91,7 @@ def generate_case_record(
     patient: PatientInfo,
     answers: ChestPainAnswers,
     symptom_text: str,
+    profile_id: Optional[str] = None,
     has_key: Optional[bool] = None,
     progress: Optional[ProgressCallback] = None,
 ) -> GenerationResult:
@@ -100,7 +102,7 @@ def generate_case_record(
     has_key = bool(settings.api_key) if has_key is None else has_key
 
     notify("规则引擎计算中...")
-    triage = triage_from_rules(kb, answers)
+    triage = triage_from_rules(kb, answers, profile_id=profile_id)
     top3_departments = triage.recommended_departments[:3]
 
     llm_extraction = None
@@ -141,6 +143,7 @@ def generate_case_record(
         llm_summary_for_patient=patient_summary,
         llm_summary_for_doctor=doctor_summary,
         rules_version=kb.version,
+        rules_profile=triage.profile_id,
     )
     notify("生成完成")
 

@@ -79,13 +79,18 @@ class MainWindow(QMainWindow):
         self._worker_thread: Optional[QThread] = None
         self._worker: Optional[GenerateCaseWorker] = None
         self._selected_3d_region: Optional[str] = None
+        self.profile_combo: Optional[QComboBox] = None
 
         self.yes_no_options = list(get_args(ChestPainAnswers.model_fields["sudden_onset"].annotation))
         self.pain_quality_options = list(get_args(ChestPainAnswers.model_fields["pain_quality"].annotation))
-        self.sex_options = [
-            "未填",
-            *[v for v in get_args(PatientInfo.model_fields["sex"].annotation) if isinstance(v, str)],
-        ]
+        sex_options_from_type: list[str] = []
+        sex_annotation = PatientInfo.model_fields["sex"].annotation
+        for arg in get_args(sex_annotation):
+            if isinstance(arg, str):
+                sex_options_from_type.append(arg)
+                continue
+            sex_options_from_type.extend([v for v in get_args(arg) if isinstance(v, str)])
+        self.sex_options = ["未填", *(sex_options_from_type or ["男", "女", "其他/不便透露"])]
         self.pain_location_options = [
             "未选择",
             "胸骨后/正中胸口",
@@ -104,6 +109,8 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "启动失败", f"无法加载规则库：{exc}")
             raise
+
+        self.state.selected_profile = self.kb.default_profile
 
         self._build_ui()
         self._bind_signals()
@@ -332,6 +339,24 @@ class MainWindow(QMainWindow):
         self.red_flags_output.setMaximumHeight(100)
         layout.addWidget(self.red_flags_output)
 
+        layout.addWidget(QLabel("高危病因后验 Top-N"))
+        self.posterior_output = QPlainTextEdit()
+        self.posterior_output.setReadOnly(True)
+        self.posterior_output.setMaximumHeight(100)
+        layout.addWidget(self.posterior_output)
+
+        layout.addWidget(QLabel("关键证据贡献 Top-N"))
+        self.evidence_output = QPlainTextEdit()
+        self.evidence_output.setReadOnly(True)
+        self.evidence_output.setMaximumHeight(100)
+        layout.addWidget(self.evidence_output)
+
+        layout.addWidget(QLabel("关键缺失项提醒"))
+        self.missing_output = QPlainTextEdit()
+        self.missing_output.setReadOnly(True)
+        self.missing_output.setMaximumHeight(80)
+        layout.addWidget(self.missing_output)
+
         layout.addWidget(QLabel("给患者的说明（LLM）"))
         self.patient_summary_output = QPlainTextEdit()
         self.patient_summary_output.setReadOnly(True)
@@ -390,6 +415,20 @@ class MainWindow(QMainWindow):
         self.api_key_status.setStyleSheet("color:#1f7a1f;" if has_key else "color:#ad2f2f;")
         layout.addWidget(self.api_key_status)
 
+        if self.kb.engine_mode == "v2" and self.kb.profile_ids:
+            layout.addWidget(QLabel("规则 Profile"))
+            self.profile_combo = QComboBox()
+            self.profile_combo.addItems(self.kb.profile_ids)
+            selected_profile = self.state.selected_profile or self.kb.profile_ids[0]
+            idx = self.profile_combo.findText(selected_profile)
+            if idx >= 0:
+                self.profile_combo.setCurrentIndex(idx)
+            self.state.selected_profile = self.profile_combo.currentText()
+            layout.addWidget(self.profile_combo)
+        else:
+            self.profile_combo = None
+            self.state.selected_profile = None
+
         self.debug_checkbox = QCheckBox("显示调试信息")
         self.debug_checkbox.setChecked(False)
         layout.addWidget(self.debug_checkbox)
@@ -409,6 +448,8 @@ class MainWindow(QMainWindow):
         self.export_json_button.clicked.connect(self._on_export_json_clicked)
         self.export_pdf_button.clicked.connect(self._on_export_pdf_clicked)
         self.debug_checkbox.toggled.connect(self._refresh_debug_output)
+        if self.profile_combo is not None:
+            self.profile_combo.currentTextChanged.connect(self._on_profile_changed)
 
         self.pain_severity_combo.currentIndexChanged.connect(self._on_inputs_changed)
         self.pain_quality_combo.currentIndexChanged.connect(self._on_inputs_changed)
@@ -429,6 +470,11 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage("就绪")
             self._on_inputs_changed()
+
+    def _on_profile_changed(self, profile_id: str) -> None:
+        self.state.selected_profile = profile_id or None
+        self.state.rf_sig_shown = None
+        self._on_inputs_changed()
 
     def _on_3d_region_selected(self, region: str) -> None:
         self._selected_3d_region = region
@@ -481,6 +527,7 @@ class MainWindow(QMainWindow):
             answers_preview=answers_preview,
             symptom_text=self.symptom_text_edit.toPlainText(),
             shown_signature=self.state.rf_sig_shown,
+            profile_id=self.state.selected_profile,
         )
 
         if not alert.active:
@@ -525,6 +572,7 @@ class MainWindow(QMainWindow):
             patient=patient,
             answers=answers,
             symptom_text=symptom_text,
+            profile_id=self.state.selected_profile,
             has_key=bool(settings.api_key),
         )
         self._worker.moveToThread(self._worker_thread)
@@ -602,12 +650,38 @@ class MainWindow(QMainWindow):
         else:
             self.red_flags_output.setPlainText("未触发规则红旗征")
 
+        if triage.posterior_breakdown:
+            top_posterior = sorted(triage.posterior_breakdown.items(), key=lambda x: x[1], reverse=True)[:5]
+            self.posterior_output.setPlainText("\n".join(f"- {h}: {p:.3f}" for h, p in top_posterior))
+        else:
+            self.posterior_output.setPlainText("当前规则引擎未提供后验概率")
+
+        if triage.evidence_top:
+            evidence_lines = [
+                f"- {e.hypothesis} <- {e.rule_id} ({e.direction}, LR={e.lr:.2f}, logLR={e.log_lr:+.3f})"
+                for e in triage.evidence_top[:5]
+            ]
+            self.evidence_output.setPlainText("\n".join(evidence_lines))
+        else:
+            self.evidence_output.setPlainText("暂无关键证据贡献")
+
+        if triage.missing_critical_questions:
+            self.missing_output.setPlainText(
+                "\n".join(f"- {field}（建议补问）" for field in triage.missing_critical_questions)
+            )
+        else:
+            self.missing_output.setPlainText("无关键缺失项")
+
         self.patient_summary_output.setPlainText(
             result.case.llm_summary_for_patient or "未生成（未配置 API Key 或 LLM 调用失败）"
         )
 
-        if triage.reasons:
-            self.reasons_output.setPlainText("\n".join(f"- {r}" for r in triage.reasons))
+        reason_lines = [f"引擎模式：{triage.engine_mode}"]
+        if triage.profile_id:
+            reason_lines.append(f"规则 Profile：{triage.profile_id}")
+        reason_lines.extend([f"- {r}" for r in triage.reasons])
+        if reason_lines:
+            self.reasons_output.setPlainText("\n".join(reason_lines))
         else:
             self.reasons_output.setPlainText("无")
 

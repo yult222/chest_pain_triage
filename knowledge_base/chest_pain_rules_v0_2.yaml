@@ -1,0 +1,266 @@
+version: "0.2"
+default_profile: outpatient_adult
+
+# 证据强度档位（医生只需要选择档位）
+strength_scale:
+  weak: { lr: 1.5 }
+  moderate: { lr: 2.2 }
+  strong: { lr: 4.0 }
+
+# 不同场景的先验与分级阈值
+profiles:
+  outpatient_adult:
+    priors:
+      ACS: 0.03
+      PE: 0.01
+      PTX: 0.005
+      DISSECTION: 0.001
+      BOERHAAVE: 0.0005
+      GERD: 0.10
+      MSK: 0.20
+      PANIC: 0.05
+    decision_thresholds:
+      emergency:
+        any_red_flag: true
+        any_posterior_ge: 0.20
+      urgent:
+        any_posterior_ge: 0.05
+    danger_hypotheses: [ACS, PE, PTX, DISSECTION, BOERHAAVE]
+
+  emergency_adult:
+    priors:
+      ACS: 0.20
+      PE: 0.04
+      PTX: 0.02
+      DISSECTION: 0.005
+      BOERHAAVE: 0.002
+      GERD: 0.08
+      MSK: 0.12
+      PANIC: 0.04
+    decision_thresholds:
+      emergency:
+        any_red_flag: true
+        any_posterior_ge: 0.20
+      urgent:
+        any_posterior_ge: 0.05
+    danger_hypotheses: [ACS, PE, PTX, DISSECTION, BOERHAAVE]
+
+# 临床概念：把临床语言固化为可复用条件
+concepts:
+  ischemic_like_pain:
+    type: boolean
+    when:
+      all_of:
+        - field: pain_quality
+          op: in
+          values: ["压榨/紧缩", "压迫感/沉重感"]
+        - any_of:
+            - { field: exertional, op: eq, value: "是" }
+            - { field: radiation, op: eq, value: "是" }
+            - { field: sweat_nausea, op: eq, value: "是" }
+
+  pleuritic_pain:
+    type: boolean
+    when: { field: pleuritic, op: eq, value: "是" }
+
+  severe_sudden_pain:
+    type: boolean
+    when:
+      all_of:
+        - { field: sudden_onset, op: eq, value: "是" }
+        - { field: pain_severity, op: gte, value: 7 }
+
+  reproducible_tenderness:
+    type: boolean
+    when: { field: reproducible, op: eq, value: "是" }
+
+  reflux_like_symptom:
+    type: boolean
+    when:
+      any_of:
+        - { field: heartburn, op: eq, value: "是" }
+        - { field: after_meal, op: eq, value: "是" }
+        - { field: relieved_by_antacid, op: eq, value: "是" }
+
+  pe_risk_cluster:
+    type: boolean
+    when:
+      any_of:
+        - { field: immobilization, op: eq, value: "是" }
+        - { field: leg_swelling, op: eq, value: "是" }
+        - { field: hemoptysis, op: eq, value: "是" }
+
+  panic_like:
+    type: boolean
+    when:
+      any_of:
+        - { field: panic, op: eq, value: "是" }
+        - { field: stress_trigger, op: eq, value: "是" }
+
+# 红旗征：命中可直接触发急诊
+red_flags:
+  - id: RF_ACS
+    name: "疑似急性冠脉综合征"
+    message: "缺血性胸痛特征 + 气促/晕厥/神经缺失"
+    when:
+      all_of:
+        - { concept: ischemic_like_pain, op: eq, value: true }
+        - any_of:
+            - { field: sob, op: eq, value: "是" }
+            - { field: syncope, op: eq, value: "是" }
+            - { field: neuro_deficit, op: eq, value: "是" }
+
+  - id: RF_DISSECTION
+    name: "疑似主动脉夹层"
+    message: "突发重度胸痛 + 撕裂/刀割样"
+    when:
+      all_of:
+        - { concept: severe_sudden_pain, op: eq, value: true }
+        - { field: tearing_pain, op: eq, value: "是" }
+
+  - id: RF_PE
+    name: "疑似肺栓塞（需急评估）"
+    message: "胸痛伴气促 + 血栓风险线索"
+    when:
+      all_of:
+        - { field: sob, op: eq, value: "是" }
+        - { concept: pe_risk_cluster, op: eq, value: true }
+
+  - id: RF_PTX
+    name: "疑似气胸（需急评估）"
+    message: "突发胸痛 + 气促 + 胸膜性疼痛"
+    when:
+      all_of:
+        - { field: sudden_onset, op: eq, value: "是" }
+        - { field: sob, op: eq, value: "是" }
+        - { concept: pleuritic_pain, op: eq, value: true }
+
+  - id: RF_BOERHAAVE
+    name: "疑似食管破裂"
+    message: "剧烈呕吐后突发重度胸痛"
+    when:
+      all_of:
+        - { field: vomiting, op: eq, value: "是" }
+        - { field: sudden_onset, op: eq, value: "是" }
+        - { field: pain_severity, op: gte, value: 7 }
+
+  - id: RF_TRAUMA
+    name: "胸部外伤后胸痛"
+    message: "胸部外伤后出现胸痛/气促"
+    when: { field: trauma, op: eq, value: "是" }
+
+# 证据规则：医生主要维护此部分
+evidence_rules:
+  - id: E_ISCHEMIC_PAIN_SUPPORTS_ACS
+    when: { concept: ischemic_like_pain, op: eq, value: true }
+    affects:
+      ACS: { direction: support, strength: strong }
+
+  - id: E_RISK_CAD_SUPPORTS_ACS
+    when: { field: risk_cad, op: eq, value: "是" }
+    affects:
+      ACS: { direction: support, strength: moderate }
+
+  - id: E_PLEURITIC_SUPPORTS_PE_PTX
+    when: { concept: pleuritic_pain, op: eq, value: true }
+    affects:
+      PE: { direction: support, strength: moderate }
+      PTX: { direction: support, strength: moderate }
+      GERD: { direction: oppose, strength: weak }
+
+  - id: E_PE_RISK_CLUSTER
+    when: { concept: pe_risk_cluster, op: eq, value: true }
+    affects:
+      PE: { direction: support, strength: strong }
+
+  - id: E_REPRODUCIBLE_TENDERNESS
+    when: { concept: reproducible_tenderness, op: eq, value: true }
+    affects:
+      ACS: { direction: oppose, strength: moderate }
+      MSK: { direction: support, strength: strong }
+
+  - id: E_REFLUX_SUPPORTS_GERD
+    when: { concept: reflux_like_symptom, op: eq, value: true }
+    affects:
+      GERD: { direction: support, strength: strong }
+      ACS: { direction: oppose, strength: weak }
+
+  - id: E_PANIC_SUPPORTS_PANIC
+    when: { concept: panic_like, op: eq, value: true }
+    affects:
+      PANIC: { direction: support, strength: moderate }
+      ACS: { direction: oppose, strength: weak }
+
+  - id: E_TEARING_SUPPORTS_DISSECTION
+    when:
+      all_of:
+        - { field: tearing_pain, op: eq, value: "是" }
+        - { field: sudden_onset, op: eq, value: "是" }
+    affects:
+      DISSECTION: { direction: support, strength: strong }
+
+  - id: E_VOMITING_SUPPORTS_BOERHAAVE
+    when:
+      all_of:
+        - { field: vomiting, op: eq, value: "是" }
+        - { field: sudden_onset, op: eq, value: "是" }
+    affects:
+      BOERHAAVE: { direction: support, strength: moderate }
+
+# 关键缺失项：未填要补问，并触发保守升级策略
+missingness_policy:
+  unknown_value: null
+  critical_questions:
+    - field: sob
+      applies_to: [ACS, PE, PTX]
+      if_missing: ask
+    - field: syncope
+      applies_to: [ACS, DISSECTION, PE]
+      if_missing: ask
+    - field: neuro_deficit
+      applies_to: [ACS, DISSECTION]
+      if_missing: ask
+    - field: hemoptysis
+      applies_to: [PE]
+      if_missing: ask
+    - field: immobilization
+      applies_to: [PE]
+      if_missing: ask
+    - field: leg_swelling
+      applies_to: [PE]
+      if_missing: ask
+
+# 输出映射：病因 -> 科室
+output_mapping:
+  hypothesis_to_department:
+    ACS: cardiology
+    PE: pulmonology
+    PTX: pulmonology
+    DISSECTION: emergency
+    BOERHAAVE: emergency
+    GERD: gastro
+    MSK: orthopedics
+    PANIC: psych
+
+  department_meta:
+    emergency:
+      name: "急诊科"
+      hint: "出现高危信号或无法排除急症时优先"
+    cardiology:
+      name: "心内科/胸痛中心"
+      hint: "疑似心肌缺血、心律失常等"
+    pulmonology:
+      name: "呼吸与危重症医学科（呼吸科）"
+      hint: "咳嗽/呼吸困难/胸膜性疼痛等"
+    gastro:
+      name: "消化内科"
+      hint: "反酸烧心、与进食相关等"
+    orthopedics:
+      name: "骨科/疼痛科"
+      hint: "按压或活动诱发、肌骨相关"
+    psych:
+      name: "心理/精神科（或身心门诊）"
+      hint: "惊恐发作样症状、焦虑相关"
+    general:
+      name: "全科/内科"
+      hint: "症状不典型但需进一步评估"

@@ -11,5 +11,6 @@ from triage.schemas import CaseRecord
 class AppState:
     rf_active: bool = False
     rf_sig_shown: Optional[str] = None
+    selected_profile: Optional[str] = None
     last_case: Optional[CaseRecord] = None
     last_result: Optional[GenerationResult] = None

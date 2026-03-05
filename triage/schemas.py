@@ -83,12 +83,27 @@ class RedFlagHit(BaseModel):
     message: str
 
 
+class EvidenceContribution(BaseModel):
+    rule_id: str
+    hypothesis: str
+    direction: Literal["support", "oppose"]
+    lr: float
+    log_lr: float
+    matched: bool
+
+
 class TriageResult(BaseModel):
     level: Literal["EMERGENCY", "URGENT", "ROUTINE"]
+    engine_mode: Literal["v1", "v2"] = "v1"
+    profile_id: Optional[str] = None
     recommended_departments: List[str]
     department_details: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     red_flags: List[RedFlagHit] = Field(default_factory=list)
     score_breakdown: Dict[str, float] = Field(default_factory=dict)
+    prior_breakdown: Dict[str, float] = Field(default_factory=dict)
+    posterior_breakdown: Dict[str, float] = Field(default_factory=dict)
+    evidence_top: List[EvidenceContribution] = Field(default_factory=list)
+    missing_critical_questions: List[str] = Field(default_factory=list)
     reasons: List[str] = Field(default_factory=list)
 
 
@@ -115,6 +130,7 @@ class CaseRecord(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     product: str = "ChestPain-Triage-MVP"
     rules_version: str = "0.1"
+    rules_profile: Optional[str] = None
 
     patient: PatientInfo
     answers: ChestPainAnswers
@@ -124,4 +140,3 @@ class CaseRecord(BaseModel):
     llm_extraction: Optional[LLMExtraction] = None
     llm_summary_for_patient: Optional[str] = None
     llm_summary_for_doctor: Optional[str] = None
-

@@ -49,6 +49,7 @@ def export_case_pdf(case: CaseRecord) -> bytes:
     draw_line("胸痛智能分诊 - 结构化病例摘要", size=14, dy=10 * mm)
     draw_line(f"生成时间: {created}")
     draw_line(f"规则版本: {case.rules_version}")
+    draw_line(f"规则 Profile: {case.rules_profile or 'default'}")
     draw_line("-")
 
     p = case.patient

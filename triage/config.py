@@ -28,7 +28,7 @@ class Settings:
     # Knowledge base
     rules_path: str = os.getenv(
         "RULES_PATH",
-        os.path.join(os.path.dirname(os.path.dirname(__file__)), "knowledge_base", "chest_pain_rules_v0_1.json"),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "knowledge_base", "chest_pain_rules_v0_2.yaml"),
     )
 
 
