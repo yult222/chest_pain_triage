@@ -1,27 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QUrl, Signal, Slot
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
-
-try:
-    from PySide6.QtWebChannel import QWebChannel
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-
-    WEBENGINE_AVAILABLE = True
-except Exception:
-    QWebChannel = None  # type: ignore[assignment]
-    QWebEngineView = None  # type: ignore[assignment]
-    WEBENGINE_AVAILABLE = False
-
-
-class Body3DBridge(QObject):
-    region_selected = Signal(str)
-
-    @Slot(str)
-    def selectRegion(self, region: str) -> None:
-        self.region_selected.emit(region)
 
 
 class Body3DWidget(QWidget):
@@ -29,30 +12,43 @@ class Body3DWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._view = None
+        self._source_pixmap = QPixmap(
+            str((Path(__file__).resolve().parent.parent / "image.png").resolve())
+        )
+
+        self._image_label = QLabel(self)
+        self._image_label.setAlignment(Qt.AlignCenter)
+        self._image_label.setMinimumHeight(220)
+        self._image_label.setMaximumHeight(340)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._image_label)
 
-        if not WEBENGINE_AVAILABLE:
-            fallback = QLabel("未检测到 Qt WebEngine，3D 点击功能不可用。已自动降级为下拉选择。")
-            fallback.setWordWrap(True)
-            layout.addWidget(fallback)
+        if self._source_pixmap.isNull():
+            self._image_label.setText("数字人图片加载失败。")
+            self._image_label.setWordWrap(True)
             return
 
-        self._bridge = Body3DBridge()
-        self._bridge.region_selected.connect(self.region_selected.emit)
-
-        self._channel = QWebChannel(self)
-        self._channel.registerObject("bridge", self._bridge)
-
-        self._view = QWebEngineView(self)
-        self._view.page().setWebChannel(self._channel)
-
-        html_path = (Path(__file__).resolve().parent / "assets" / "body3d.html").resolve()
-        self._view.setUrl(QUrl.fromLocalFile(str(html_path)))
-        layout.addWidget(self._view)
+        self._refresh_pixmap()
 
     def clear_selection(self) -> None:
-        if self._view is not None:
-            self._view.page().runJavaScript("window.clearSelection && window.clearSelection();")
+        return
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        if not self._source_pixmap.isNull():
+            self._refresh_pixmap()
+
+    def _refresh_pixmap(self) -> None:
+        target_size = self._image_label.size()
+        if target_size.width() <= 0 or target_size.height() <= 0:
+            return
+
+        self._image_label.setPixmap(
+            self._source_pixmap.scaled(
+                target_size,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        )

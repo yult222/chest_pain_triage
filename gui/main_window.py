@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional, get_args
 
 from PySide6.QtCore import Qt, QThread
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -36,7 +37,7 @@ from triage.exporter import export_case_json, export_case_pdf
 from triage.rules_engine import load_knowledge_base
 from triage.schemas import ChestPainAnswers, PatientInfo
 
-from .body3d_widget import Body3DWidget, WEBENGINE_AVAILABLE
+from .body3d_widget import Body3DWidget
 from .state import AppState
 from .worker import GenerateCaseWorker
 
@@ -73,7 +74,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("胸痛智能分诊系统（PySide6）")
-        self.resize(1500, 960)
+        self._landscape_enforced = False
 
         self.state = AppState()
         self._worker_thread: Optional[QThread] = None
@@ -83,13 +84,15 @@ class MainWindow(QMainWindow):
 
         self.yes_no_options = list(get_args(ChestPainAnswers.model_fields["sudden_onset"].annotation))
         self.pain_quality_options = list(get_args(ChestPainAnswers.model_fields["pain_quality"].annotation))
+
         sex_options_from_type: list[str] = []
         sex_annotation = PatientInfo.model_fields["sex"].annotation
         for arg in get_args(sex_annotation):
             if isinstance(arg, str):
                 sex_options_from_type.append(arg)
                 continue
-            sex_options_from_type.extend([v for v in get_args(arg) if isinstance(v, str)])
+            sex_options_from_type.extend([value for value in get_args(arg) if isinstance(value, str)])
+
         self.sex_options = ["未填", *(sex_options_from_type or ["男", "女", "其他/不便透露"])]
         self.pain_location_options = [
             "未选择",
@@ -101,7 +104,6 @@ class MainWindow(QMainWindow):
             "左肩/左上肢",
             "右肩/右上肢",
         ]
-
         self.answer_widgets: dict[str, QComboBox] = {}
 
         try:
@@ -116,52 +118,86 @@ class MainWindow(QMainWindow):
         self._bind_signals()
         self._update_consent_state()
         self._refresh_debug_output()
+        self._apply_initial_window_geometry()
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        if not self._landscape_enforced:
+            self._landscape_enforced = True
+            self._apply_initial_window_geometry()
+
+    def _apply_initial_window_geometry(self) -> None:
+        requested_min_width = 980
+        requested_min_height = 660
+        target_width = 1180
+        target_height = 780
+
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            safe_width = max(900, available.width() - 48)
+            safe_height = max(620, available.height() - 72)
+            min_width = min(requested_min_width, safe_width)
+            min_height = min(requested_min_height, safe_height)
+            width = max(min_width, min(target_width, safe_width))
+            height = max(min_height, min(target_height, safe_height))
+            if width <= height:
+                width = min(safe_width, max(min_width, height + 180))
+        else:
+            min_width = requested_min_width
+            min_height = requested_min_height
+            width = target_width
+            height = target_height
+
+        self.setMinimumSize(min_width, min_height)
+        self.resize(width, height)
 
     def _build_ui(self) -> None:
         root = QWidget(self)
         self.setCentralWidget(root)
 
         root_layout = QHBoxLayout(root)
-        root_layout.setContentsMargins(12, 12, 12, 12)
-        root_layout.setSpacing(12)
+        root_layout.setContentsMargins(10, 10, 10, 10)
+        root_layout.setSpacing(10)
 
         splitter = QSplitter(Qt.Horizontal, self)
         root_layout.addWidget(splitter)
 
         left_scroll = QScrollArea(self)
         left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
         left_panel = QWidget()
         left_scroll.setWidget(left_panel)
 
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(8, 8, 8, 8)
-        left_layout.setSpacing(10)
+        left_layout.setContentsMargins(6, 6, 6, 6)
+        left_layout.setSpacing(8)
 
-        title = QLabel("胸痛智能分诊系统（MVP）")
-        title.setStyleSheet("font-size: 24px; font-weight: 700;")
+        title = QLabel("胸痛智能分诊工作台")
+        title.setStyleSheet("font-size: 22px; font-weight: 700;")
         left_layout.addWidget(title)
 
         safety_banner = QLabel(
-            "⚠️ 免责声明：本系统仅用于就诊科室建议与分诊辅助，不能替代医生诊断或急救处置。"
-            "若胸痛严重或伴呼吸困难/大汗/晕厥/神经功能缺失，请立即急诊评估或呼叫急救。"
+            "本系统仅用于分诊辅助，不能替代医生诊断或急救处置。"
+            "若胸痛严重或伴呼吸困难、大汗、晕厥、神经功能缺失，请立即急诊评估或呼叫急救。"
         )
         safety_banner.setWordWrap(True)
-        safety_banner.setStyleSheet(
-            "background:#fff4ce; border:1px solid #f5c26b; border-radius:6px; padding:10px; color:#5a3b00;"
-        )
         left_layout.addWidget(safety_banner)
 
         self.consent_checkbox = QCheckBox(
-            "我理解并同意：该系统仅作分诊参考，不能替代医生诊断；如有急症我会优先就医/呼叫急救。"
+            "我理解并同意：该系统仅作分诊参考，不能替代医生诊断；如有急症我会优先就医或呼叫急救。"
         )
         left_layout.addWidget(self.consent_checkbox)
 
         self.gated_container = QWidget(self)
         gated_layout = QVBoxLayout(self.gated_container)
         gated_layout.setContentsMargins(0, 0, 0, 0)
-        gated_layout.setSpacing(10)
+        gated_layout.setSpacing(8)
 
         top_grid = QGridLayout()
+        top_grid.setHorizontalSpacing(10)
+        top_grid.setVerticalSpacing(10)
         top_grid.setColumnStretch(0, 1)
         top_grid.setColumnStretch(1, 1)
         top_grid.addWidget(self._build_basic_info_group(), 0, 0)
@@ -172,18 +208,15 @@ class MainWindow(QMainWindow):
         gated_layout.addWidget(self._build_questionnaire_section())
 
         self.realtime_alert_banner = QLabel(
-            "⚠️ 系统实时检测到可能的高危信号（红旗征）。建议立即急诊评估/呼叫急救。"
+            "系统实时检测到可能的高危信号（红旗征）。建议立即急诊评估或呼叫急救。"
         )
         self.realtime_alert_banner.setWordWrap(True)
-        self.realtime_alert_banner.setStyleSheet(
-            "background:#fde8e8; border:1px solid #f38b8b; border-radius:6px; padding:10px; color:#7a1212;"
-        )
         self.realtime_alert_banner.setVisible(False)
         gated_layout.addWidget(self.realtime_alert_banner)
 
         button_row = QHBoxLayout()
         self.generate_button = QPushButton("生成分诊建议")
-        self.generate_button.setMinimumHeight(36)
+        self.generate_button.setMinimumHeight(34)
         self.export_json_button = QPushButton("导出 JSON")
         self.export_pdf_button = QPushButton("导出 PDF")
         self.export_json_button.setEnabled(False)
@@ -197,7 +230,7 @@ class MainWindow(QMainWindow):
         self.progress_log = QPlainTextEdit()
         self.progress_log.setReadOnly(True)
         self.progress_log.setPlaceholderText("运行进度将显示在这里...")
-        self.progress_log.setMaximumHeight(120)
+        self.progress_log.setMaximumHeight(96)
         gated_layout.addWidget(self.progress_log)
 
         gated_layout.addWidget(self._build_result_group())
@@ -207,54 +240,48 @@ class MainWindow(QMainWindow):
         sidebar = self._build_sidebar_panel()
         splitter.addWidget(left_scroll)
         splitter.addWidget(sidebar)
-        splitter.setStretchFactor(0, 4)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([1100, 320])
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([860, 300])
 
         self.statusBar().showMessage("就绪")
 
     def _build_basic_info_group(self) -> QGroupBox:
-        group = QGroupBox("1) 基本信息")
+        group = QGroupBox("1. 患者信息")
         form = QFormLayout(group)
+        form.setSpacing(10)
 
         self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("例如：张三")
+
         self.sex_combo = QComboBox()
         self.sex_combo.addItems(self.sex_options)
+
         self.age_spin = QSpinBox()
         self.age_spin.setRange(0, 120)
         self.age_spin.setValue(30)
-        self.phone_edit = QLineEdit()
 
-        form.addRow("姓名（可选，用于导出病例）", self.name_edit)
-        form.addRow("性别（可选）", self.sex_combo)
-        form.addRow("年龄（可选）", self.age_spin)
-        form.addRow("联系方式（可选）", self.phone_edit)
+        self.phone_edit = QLineEdit()
+        self.phone_edit.setPlaceholderText("可选，便于病例导出")
+
+        form.addRow("姓名", self.name_edit)
+        form.addRow("性别", self.sex_combo)
+        form.addRow("年龄", self.age_spin)
+        form.addRow("联系方式", self.phone_edit)
         return group
 
     def _build_pain_location_group(self) -> QGroupBox:
-        group = QGroupBox("2) 疼痛位置")
+        group = QGroupBox("2. 疼痛位置")
         layout = QVBoxLayout(group)
+        layout.setSpacing(8)
 
-        caption = QLabel("支持点击 3D 数字人选择疼痛位置；若不可用可直接使用下拉框。")
+        caption = QLabel("请参考下图，并在下方选择最主要的疼痛位置。")
         caption.setWordWrap(True)
         layout.addWidget(caption)
 
-        self.body3d_widget: Optional[Body3DWidget] = None
-        if WEBENGINE_AVAILABLE:
-            self.body3d_widget = Body3DWidget(self)
-            self.body3d_widget.setMinimumHeight(360)
-            layout.addWidget(self.body3d_widget)
-        else:
-            info = QLabel("未检测到 Qt WebEngine，已降级为下拉框选择。")
-            info.setWordWrap(True)
-            layout.addWidget(info)
-
-        self.selected_3d_label = QLabel("3D 已选：未选择")
-        layout.addWidget(self.selected_3d_label)
-
-        clear_btn = QPushButton("清除 3D 选择")
-        clear_btn.clicked.connect(self._clear_3d_selection)
-        layout.addWidget(clear_btn)
+        self.body3d_widget = Body3DWidget(self)
+        self.body3d_widget.setMinimumHeight(250)
+        layout.addWidget(self.body3d_widget)
 
         self.pain_location_combo = QComboBox()
         self.pain_location_combo.addItems(self.pain_location_options)
@@ -264,37 +291,40 @@ class MainWindow(QMainWindow):
         return group
 
     def _build_symptom_group(self) -> QGroupBox:
-        group = QGroupBox("3) 症状补充（填空题，推荐优先填写）")
+        group = QGroupBox("3. 自述症状")
         layout = QVBoxLayout(group)
+        layout.setSpacing(8)
 
-        prompt = QLabel("请用自己的话描述胸痛：开始时间、部位、性质、持续时长、放射痛、伴随症状、既往史、用药等。")
+        prompt = QLabel("建议优先补充自然语言描述，例如开始时间、性质、持续时长、放射痛、伴随症状、既往史和用药情况。")
         prompt.setWordWrap(True)
         layout.addWidget(prompt)
 
         self.symptom_text_edit = QTextEdit()
         self.symptom_text_edit.setMinimumHeight(120)
+        self.symptom_text_edit.setPlaceholderText("请尽量完整描述胸痛表现和伴随症状。")
         layout.addWidget(self.symptom_text_edit)
 
         return group
 
     def _build_questionnaire_section(self) -> QWidget:
-        section = CollapsibleSection("4) 症状问卷（选择题，可选）")
+        section = CollapsibleSection("4. 症状问卷（可选）")
         content = QFormLayout()
+        content.setSpacing(10)
 
         self.pain_severity_combo = QComboBox()
         self.pain_severity_combo.addItem("未选择")
         self.pain_severity_combo.addItems([str(i) for i in range(11)])
-        content.addRow("疼痛程度（0-10，可选）", self.pain_severity_combo)
+        content.addRow("疼痛程度（0-10）", self.pain_severity_combo)
 
         self.pain_quality_combo = QComboBox()
         self.pain_quality_combo.addItems(self.pain_quality_options)
         self.answer_widgets["pain_quality"] = self.pain_quality_combo
-        content.addRow("疼痛性质更像哪种？（可选）", self.pain_quality_combo)
+        content.addRow("疼痛性质", self.pain_quality_combo)
 
         self._add_yes_no_row(content, "sudden_onset", "是否突然发生？")
         self._add_yes_no_row(content, "trauma", "是否有外伤/撞击/跌倒后出现？")
-        self._add_yes_no_row(content, "tearing_pain", "是否明显‘撕裂/刀割样’并可放射到背部？")
-        self._add_yes_no_row(content, "pleuritic", "是否深呼吸/咳嗽时更痛（胸膜性疼痛）？")
+        self._add_yes_no_row(content, "tearing_pain", "是否明显撕裂/刀割样并可放射到背部？")
+        self._add_yes_no_row(content, "pleuritic", "是否深呼吸/咳嗽时更痛？")
         self._add_yes_no_row(content, "exertional", "是否运动/上楼/走快时更明显？")
         self._add_yes_no_row(content, "relieved_by_rest", "是否休息可缓解？")
         self._add_yes_no_row(content, "reproducible", "按压胸壁/转动身体可诱发或复制疼痛？")
@@ -307,11 +337,11 @@ class MainWindow(QMainWindow):
         self._add_yes_no_row(content, "cough_fever", "是否咳嗽或发热？")
         self._add_yes_no_row(content, "hemoptysis", "是否咯血？")
         self._add_yes_no_row(content, "heartburn", "是否烧心/反酸？")
-        self._add_yes_no_row(content, "after_meal", "是否与进食相关（餐后更明显）？")
+        self._add_yes_no_row(content, "after_meal", "是否与进食相关？")
         self._add_yes_no_row(content, "relieved_by_antacid", "服用抑酸/胃药后缓解？")
-        self._add_yes_no_row(content, "vomiting", "是否出现明显呕吐（尤其剧烈/反复）？")
+        self._add_yes_no_row(content, "vomiting", "是否出现明显呕吐？")
         self._add_yes_no_row(content, "worse_with_movement", "活动/姿势变化时更痛？")
-        self._add_yes_no_row(content, "panic", "是否像惊恐发作（憋闷+强烈恐惧+发抖等）？")
+        self._add_yes_no_row(content, "panic", "是否像惊恐发作？")
         self._add_yes_no_row(content, "stress_trigger", "是否在情绪/压力后诱发？")
         self._add_yes_no_row(content, "risk_cad", "是否存在心血管危险因素/既往心脏病史？")
         self._add_yes_no_row(content, "immobilization", "近期手术/久坐久卧/长途旅行？")
@@ -323,6 +353,7 @@ class MainWindow(QMainWindow):
     def _build_result_group(self) -> QGroupBox:
         group = QGroupBox("分诊建议")
         layout = QVBoxLayout(group)
+        layout.setSpacing(8)
 
         self.level_label = QLabel("尚未生成")
         self.level_label.setStyleSheet("font-size: 18px; font-weight: 700;")
@@ -330,70 +361,68 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(QLabel("推荐就诊科室（Top 3）"))
         self.dept_list = QListWidget()
-        self.dept_list.setMaximumHeight(100)
+        self.dept_list.setMaximumHeight(88)
         layout.addWidget(self.dept_list)
 
         layout.addWidget(QLabel("红旗征触发项"))
         self.red_flags_output = QPlainTextEdit()
         self.red_flags_output.setReadOnly(True)
-        self.red_flags_output.setMaximumHeight(100)
+        self.red_flags_output.setMaximumHeight(88)
         layout.addWidget(self.red_flags_output)
 
         layout.addWidget(QLabel("高危病因后验 Top-N"))
         self.posterior_output = QPlainTextEdit()
         self.posterior_output.setReadOnly(True)
-        self.posterior_output.setMaximumHeight(100)
+        self.posterior_output.setMaximumHeight(88)
         layout.addWidget(self.posterior_output)
 
         layout.addWidget(QLabel("关键证据贡献 Top-N"))
         self.evidence_output = QPlainTextEdit()
         self.evidence_output.setReadOnly(True)
-        self.evidence_output.setMaximumHeight(100)
+        self.evidence_output.setMaximumHeight(88)
         layout.addWidget(self.evidence_output)
 
         layout.addWidget(QLabel("关键缺失项提醒"))
         self.missing_output = QPlainTextEdit()
         self.missing_output.setReadOnly(True)
-        self.missing_output.setMaximumHeight(80)
+        self.missing_output.setMaximumHeight(72)
         layout.addWidget(self.missing_output)
 
         layout.addWidget(QLabel("给患者的说明（LLM）"))
         self.patient_summary_output = QPlainTextEdit()
         self.patient_summary_output.setReadOnly(True)
-        self.patient_summary_output.setMaximumHeight(100)
+        self.patient_summary_output.setMaximumHeight(96)
         layout.addWidget(self.patient_summary_output)
 
         layout.addWidget(QLabel("规则引擎解释（可审计）"))
         self.reasons_output = QPlainTextEdit()
         self.reasons_output.setReadOnly(True)
-        self.reasons_output.setMaximumHeight(120)
+        self.reasons_output.setMaximumHeight(108)
         layout.addWidget(self.reasons_output)
 
         layout.addWidget(QLabel("调试信息"))
         self.debug_output = QPlainTextEdit()
         self.debug_output.setReadOnly(True)
         self.debug_output.setVisible(False)
-        self.debug_output.setMaximumHeight(220)
+        self.debug_output.setMaximumHeight(180)
         layout.addWidget(self.debug_output)
 
         return group
 
     def _build_sidebar_panel(self) -> QWidget:
         panel = QWidget(self)
-        panel.setMinimumWidth(300)
-        panel.setMaximumWidth(360)
+        panel.setMinimumWidth(260)
+        panel.setMaximumWidth(320)
 
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(10)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
 
         title = QLabel("配置")
         title.setStyleSheet("font-size:18px; font-weight:700;")
         layout.addWidget(title)
 
-        caption = QLabel(
-            "DeepSeek 使用 OpenAI 兼容接口：base_url=https://api.deepseek.com，模型 deepseek-chat/deepseek-reasoner。"
-        )
+        caption = QLabel("DeepSeek 使用 OpenAI 兼容接口。")
         caption.setWordWrap(True)
         layout.addWidget(caption)
 
@@ -409,10 +438,9 @@ class MainWindow(QMainWindow):
 
         has_key = bool(settings.api_key)
         self.api_key_status = QLabel(
-            "API Key 状态：✅ 已配置" if has_key else "API Key 状态：❌ 未配置（LLM 功能将降级为仅规则分诊）"
+            "API Key 状态：已配置" if has_key else "API Key 状态：未配置（将降级为仅规则分诊）"
         )
         self.api_key_status.setWordWrap(True)
-        self.api_key_status.setStyleSheet("color:#1f7a1f;" if has_key else "color:#ad2f2f;")
         layout.addWidget(self.api_key_status)
 
         if self.kb.engine_mode == "v2" and self.kb.profile_ids:
@@ -459,12 +487,12 @@ class MainWindow(QMainWindow):
         for combo in self.answer_widgets.values():
             combo.currentIndexChanged.connect(self._on_inputs_changed)
 
-        if self.body3d_widget is not None:
-            self.body3d_widget.region_selected.connect(self._on_3d_region_selected)
+        self.body3d_widget.region_selected.connect(self._on_3d_region_selected)
 
     def _update_consent_state(self, *_args) -> None:
         allowed = self.consent_checkbox.isChecked()
         self.gated_container.setEnabled(allowed)
+        self.generate_button.setEnabled(allowed and self._worker_thread is None)
         if not allowed:
             self.statusBar().showMessage("请先勾选知情同意")
         else:
@@ -478,14 +506,11 @@ class MainWindow(QMainWindow):
 
     def _on_3d_region_selected(self, region: str) -> None:
         self._selected_3d_region = region
-        self.selected_3d_label.setText(f"3D 已选：{region}")
         self._on_inputs_changed()
 
     def _clear_3d_selection(self) -> None:
         self._selected_3d_region = None
-        self.selected_3d_label.setText("3D 已选：未选择")
-        if self.body3d_widget is not None:
-            self.body3d_widget.clear_selection()
+        self.body3d_widget.clear_selection()
         self._on_inputs_changed()
 
     def _current_pain_location(self) -> Optional[str]:
@@ -541,11 +566,11 @@ class MainWindow(QMainWindow):
 
         if alert.should_popup and alert.signature:
             self.state.rf_sig_shown = alert.signature
-            hit_lines = "\n".join(f"- {h}" for h in alert.hits)
+            hit_lines = "\n".join(f"- {hit}" for hit in alert.hits)
             QMessageBox.warning(
                 self,
                 "紧急提醒（请优先就医）",
-                "检测到可能的高危信号（红旗征）。建议立即急诊评估/呼叫急救。\n\n"
+                "检测到可能的高危信号（红旗征）。建议立即急诊评估或呼叫急救。\n\n"
                 f"触发项：\n{hit_lines}",
             )
 
@@ -621,6 +646,7 @@ class MainWindow(QMainWindow):
         if self._worker_thread is not None:
             self._worker_thread.deleteLater()
             self._worker_thread = None
+        self.generate_button.setEnabled(self.consent_checkbox.isChecked())
 
     def _render_result(self, result: GenerationResult) -> None:
         triage = result.triage
@@ -633,17 +659,15 @@ class MainWindow(QMainWindow):
 
         if triage.level == "EMERGENCY":
             self.level_label.setStyleSheet("font-size: 18px; font-weight: 700; color:#b01c1c;")
-            self.level_label.setText(level_text)
         elif triage.level == "URGENT":
             self.level_label.setStyleSheet("font-size: 18px; font-weight: 700; color:#8a5a00;")
-            self.level_label.setText(level_text)
         else:
             self.level_label.setStyleSheet("font-size: 18px; font-weight: 700; color:#175d2b;")
-            self.level_label.setText(level_text)
+        self.level_label.setText(level_text)
 
         self.dept_list.clear()
-        for i, dept in enumerate(result.top3_departments, start=1):
-            self.dept_list.addItem(f"{i}. {dept}")
+        for index, dept in enumerate(result.top3_departments, start=1):
+            self.dept_list.addItem(f"{index}. {dept}")
 
         if triage.red_flags:
             self.red_flags_output.setPlainText("\n".join(f"- {rf.name}：{rf.message}" for rf in triage.red_flags))
@@ -651,15 +675,17 @@ class MainWindow(QMainWindow):
             self.red_flags_output.setPlainText("未触发规则红旗征")
 
         if triage.posterior_breakdown:
-            top_posterior = sorted(triage.posterior_breakdown.items(), key=lambda x: x[1], reverse=True)[:5]
-            self.posterior_output.setPlainText("\n".join(f"- {h}: {p:.3f}" for h, p in top_posterior))
+            top_posterior = sorted(triage.posterior_breakdown.items(), key=lambda item: item[1], reverse=True)[:5]
+            self.posterior_output.setPlainText(
+                "\n".join(f"- {hypothesis}: {probability:.3f}" for hypothesis, probability in top_posterior)
+            )
         else:
             self.posterior_output.setPlainText("当前规则引擎未提供后验概率")
 
         if triage.evidence_top:
             evidence_lines = [
-                f"- {e.hypothesis} <- {e.rule_id} ({e.direction}, LR={e.lr:.2f}, logLR={e.log_lr:+.3f})"
-                for e in triage.evidence_top[:5]
+                f"- {item.hypothesis} <- {item.rule_id} ({item.direction}, LR={item.lr:.2f}, logLR={item.log_lr:+.3f})"
+                for item in triage.evidence_top[:5]
             ]
             self.evidence_output.setPlainText("\n".join(evidence_lines))
         else:
@@ -679,11 +705,8 @@ class MainWindow(QMainWindow):
         reason_lines = [f"引擎模式：{triage.engine_mode}"]
         if triage.profile_id:
             reason_lines.append(f"规则 Profile：{triage.profile_id}")
-        reason_lines.extend([f"- {r}" for r in triage.reasons])
-        if reason_lines:
-            self.reasons_output.setPlainText("\n".join(reason_lines))
-        else:
-            self.reasons_output.setPlainText("无")
+        reason_lines.extend([f"- {reason}" for reason in triage.reasons])
+        self.reasons_output.setPlainText("\n".join(reason_lines) if reason_lines else "无")
 
     def _refresh_debug_output(self, *_args) -> None:
         show_debug = self.debug_checkbox.isChecked()
@@ -715,8 +738,8 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            with open(path, "wb") as f:
-                f.write(export_case_json(self.state.last_case))
+            with open(path, "wb") as file:
+                file.write(export_case_json(self.state.last_case))
             self.statusBar().showMessage(f"已导出 JSON：{path}", 5000)
         except Exception as exc:
             QMessageBox.critical(self, "导出失败", f"JSON 导出失败：{exc}")
@@ -732,8 +755,8 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            with open(path, "wb") as f:
-                f.write(export_case_pdf(self.state.last_case))
+            with open(path, "wb") as file:
+                file.write(export_case_pdf(self.state.last_case))
             self.statusBar().showMessage(f"已导出 PDF：{path}", 5000)
         except Exception as exc:
             QMessageBox.critical(self, "导出失败", f"PDF 导出失败：{exc}")
